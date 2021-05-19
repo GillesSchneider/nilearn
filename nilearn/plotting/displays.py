@@ -620,6 +620,8 @@ class BaseSlicer(object):
         self._black_bg = black_bg
         self._brain_color = brain_color
         self._colorbar = False
+        self._legend_data = {'handles': [], 
+                                'labels': []}
         self._colorbar_width = 0.05 * bb.width
         self._colorbar_margin = dict(left=0.25 * bb.width,
                                      right=0.02 * bb.width,
@@ -824,68 +826,79 @@ class BaseSlicer(object):
         if not filled:
             threshold = None
         
+        # one call allowed to use colorbar
         if colorbar and self._colorbar:
-            raise ValueError("This figure already has an overlay with a "
-                             "colorbar.")
+            raise ValueError("The figure already has a colorbar.")
         else:
             self._colorbar = True
+            # create a new ax for colorbar
+            self._colorbar_ax = self.frame_axes.figure.add_axes([0.25, 0.075, 0.50, 0.025])
+            max_value = np.around(np.max(get_data(img)))
 
-        
-        levels = []
-
-        if 'levels' in kwargs:
-            for x,y in kwargs['levels']:
-                levels += [x,y] 
-
-            levels = np.sort(np.unique(levels))
-            # TODO: add **kwargs               
-            ims = self._map_show(img, type='contour', threshold=threshold, levels=levels)    
-        else:
-            ims = self._map_show(img, type='contour', threshold=threshold, **kwargs)
-
-        if filled:
-            # TODO: deal with single value, get max value of image, etc.
-            #if 'levels' in kwargs:
-            #    levels = kwargs['levels']
-            #    if len(levels) <= 1:
-                    # contour fillings levels should be given as (lower, upper).
-            #        levels.append(np.inf)
-
+        if colorbar:
             if 'levels' in kwargs:
-                for i in kwargs['levels']:
-                    # TODO: add **kwargs               
-                    ims = self._map_show(img, type='contourf', threshold=threshold, levels=i)
+                levels = kwargs['levels']
+                copy_levels = levels
+
+                for i in range(len(levels)):
+                    if not isinstance(levels[i], list):
+                        raise ValueError("Elements should be a list.")
+                    
+                
+            if not filled:
+                levels = np.sort(np.unique([item for sublist in levels for item in sublist]))
+                kwargs['levels'] = levels
+                ims = self._map_show(img, type='contour', threshold=threshold, **kwargs)    
+                
+                if show_level:
                     artists, labels = ims[0].legend_elements()
+                    self._legend_data['handles'] += artists
+                    self._legend_data['labels'] += labels
+                    self.frame_axes.legend(handles=self._legend_data['handles'], labels=self._legend_data['labels'])
+                    
 
-                    if show_level:
-                        self._legend_data['handles'] += artists
-                        self._legend_data['labels'] += labels
-                        self.frame_axes.legend(handles=self._legend_data['handles'], labels=self._legend_data['labels'])
+            if filled:
+                # TODO: deal with single value, get max value of image, etc.
+                if 'levels' in kwargs:
+                                
+                    for i in range(len(copy_levels)):
+                        if len(copy_levels[i]) <= 1:
+                            copy_levels[i] = [copy_levels[i][0], max_value]
+                    
+                    levels = np.sort(np.unique([item for sublist in copy_levels for item in sublist]))
 
-       
-        
+                    for i in range(len(levels) - 1):
+                        ims = self._map_show(img, type='contourf', threshold=threshold, levels=[levels[i], levels[i+1]])
+                        
+                        if show_level:
+                            artists, labels = ims[0].legend_elements()
+                            self._legend_data['handles'] += artists
+                            self._legend_data['labels'] += labels
+                            self.frame_axes.legend(handles=self._legend_data['handles'], labels=self._legend_data['labels'])
+                   
+        else:
+            #TODO : leave the possibility to use add_contours as before
+            ims = self._map_show(img, type='contour', threshold=threshold, **kwargs)    
+            
+                   
         if colorbar and ims:
 
-            self._colorbar_ax = self.frame_axes.figure.add_axes([0.25, 0.075, 0.50, 0.025])
-            
-            #TODO: kwargs for _cbar
             boundaries = None
             if 'levels' in kwargs:
-                boundaries = levels
-                #boundaries = [ims[0].norm.vmin] + boundaries + [ims[0].norm.vmax]
+                boundaries = levels.tolist()
+            if not filled:
+                boundaries.append(max_value)
 
             self._cbar = self.frame_axes.figure.colorbar(
                 matplotlib.cm.ScalarMappable(norm=ims[0].norm, cmap=ims[0].cmap),
                 orientation="horizontal",
                 boundaries = boundaries,
                 cax=self._colorbar_ax)
-            
-            if 'levels' in kwargs:
-                
-                if not filled:
-                    tick_locs = [np.around((boundaries[i] + boundaries[i+1])/2, 2) for i in range(len(boundaries) - 1)]
-                    self._cbar.set_ticks(tick_locs)
-                    self._cbar.set_ticklabels(boundaries)
+
+            if not filled:
+                tick_locs = [np.around((boundaries[i] + boundaries[i+1])/2, 2) for i in range(len(boundaries) - 1)]
+                self._cbar.set_ticks(tick_locs)
+                self._cbar.set_ticklabels(boundaries)
          
             tick_color = 'w' if self._black_bg else 'k'
             outline_color = 'w' if self._black_bg else 'k'
@@ -894,8 +907,7 @@ class BaseSlicer(object):
                 tick.set_color(tick_color)
             self._colorbar_ax.xaxis.set_tick_params(width=0)
             self._cbar.outline.set_edgecolor(outline_color)
-                
-           
+        
         plt.draw_if_interactive()
     def _map_show(self, img, type='imshow',
                   resampling_interpolation='continuous',
